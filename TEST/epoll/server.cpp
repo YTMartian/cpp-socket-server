@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
 
                     handle_get(client_sockfd, file_name);
                 }
+                close(client_sockfd);
             }
 
         }
