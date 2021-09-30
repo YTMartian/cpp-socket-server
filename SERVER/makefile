@@ -1,10 +1,18 @@
+debug = true
+ifeq ($(debug), true)
 CC = g++
-OP = -std=c++17 -c -O2 -Wall -Wextra
+OP = -std=c++17 -c -g -Debug -Wall -Wextra
+else
+CC = g++
+OP = -std=c++17 -c -O2
+endif
 
 all: server
 
-server: server.o HttpServer.o GetProcessor.o PostProcessor.o libllhttp.so
-	$(CC) -no-pie server.o HttpServer.o GetProcessor.o PostProcessor.o -o server -pthread -l sqlite3 -ljsoncpp
+# 使用动态链接库： -L. <-l加去掉前缀lib和.so之后的名字>
+
+server: server.o HttpServer.o GetProcessor.o PostProcessor.o UrlEncoder.o ProcessorFactory.o libllhttp.so
+	$(CC) -no-pie server.o HttpServer.o GetProcessor.o PostProcessor.o UrlEncoder.o ProcessorFactory.o -o server -pthread -l sqlite3 -ljsoncpp -L. -lllhttp
 	rm *.o
 
 server.o: server.cpp
@@ -18,5 +26,12 @@ GetProcessor.o: GetProcessor.cpp
 
 PostProcessor.o: PostProcessor.cpp
 	$(CC)  $(OP) PostProcessor.cpp
+
+UrlEncoder.o: UrlEncoder.cpp
+	$(CC)  $(OP) UrlEncoder.cpp
+
+ProcessorFactory.o: ProcessorFactory.cpp
+	$(CC)  $(OP) ProcessorFactory.cpp
+
 clean:
 	rm *.o

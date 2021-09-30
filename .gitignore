@@ -1,1 +1,4 @@
 www
+SERVER/.idea
+SERVER/*.o
+logs

@@ -9,12 +9,19 @@ HttpServer::HttpServer() {
     backlog = DEFAULT_BACKLOG;
     request_buf = new char[N];
     server_address = new struct sockaddr_in;
-    client_address = new struct  sockaddr_in;
+    client_address = new struct sockaddr_in;
+    http_parser_settings = new llhttp_settings_t;
+    processor = nullptr;
+
+    llhttp_settings_init(http_parser_settings);
+    //设置回调函数
+    handle_on_message_complete(http_parser_settings);
+    llhttp_init(&http_parser, HTTP_REQUEST, http_parser_settings);
+    http_parser.data = this;//一定要先绑定，否则reinterpret_cast时有问题，找了半天错
 }
 
 HttpServer::~HttpServer() {
     delete[] request_buf;
-    delete httpParser;
     delete server_address;
     delete client_address;
 }
@@ -25,90 +32,28 @@ int HttpServer::get_ipv4_socket_bind_and_listen() {
     server_address->sin_port = htons(port);//host bytes-order to network bytes-order.
     server_address->sin_addr.s_addr = INADDR_ANY;// ip address is 0.0.0.0
 
-    //establish a socket.
+    //建立socket.
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket建立失败.");
+        logger->error("socket建立失败.");
+        spdlog::error("socket建立失败.");
         exit(EXIT_FAILURE);//exit(1)
     }
-//    cout << "server socket: " << server_fd << endl;
-    //bind server socket to server address.
     if ((bind(server_fd, (struct sockaddr *) server_address, sizeof(struct sockaddr))) < 0) {
-        perror("socket建立失败.");
+        logger->error("socket建立失败.");
+        spdlog::error("socket建立失败.");
         exit(EXIT_FAILURE);
     }
-    cout << "socket建立成功." << endl;
-    //listen to connection from clients.
+    logger->info("socket建立成功.");
+    spdlog::info("socket建立成功.");
+    //监听
     if (listen(server_fd, backlog) < 0) {
-        perror("启动监听失败.");
+        logger->error("启动监听失败.");
+        spdlog::error("启动监听失败.");
         exit(EXIT_FAILURE);
     }
-    cout << "监听端口: " << port << endl;
+    logger->info("监听端口: {}", port);
+    spdlog::info("监听端口: {}", port);
     return server_fd;
-}
-
-string HttpServer::get_request_file_name(string buf) {
-    //the request buf is like "GET /index.html HTTP/1.1 ... ..."
-    size_t buf_index = 0;
-    string info;
-    while (buf_index < buf.size() && buf[buf_index++] != '/') info += buf[buf_index - 1];
-    if (buf_index - 1 == buf.size() || buf[buf_index - 1] != '/')return "";//illegal request.
-    string file_name;
-    //extract request file from the request buf.
-    while (buf[buf_index++] != ' ') file_name += buf[buf_index - 1];
-    if (!IS_TEST) cout << info + file_name << endl;
-    return file_name;
-}
-
-void HttpServer::handle_get(int client_sockfd, string file_name) {
-    struct stat st;
-    int f;
-    //if file not find then return 404.
-    if (stat(file_name.c_str(), &st) < 0) {
-        handle_get(client_sockfd, path + "/404.html");
-        return;
-    }
-    //open request file.
-    if ((f = open(file_name.c_str(), O_RDONLY)) < 0) { //BUG!! I writed ") < 0)){"
-        perror("open file failed");
-        close(client_sockfd);
-        return;
-    }
-    //send headers.
-    if(write(client_sockfd, HEADER.c_str(), HEADER.size()) < 0) {
-        perror("response head写入失败.");
-    }
-    //send file to client.
-    sendfile(client_sockfd, f, NULL, st.st_size + 1);
-    close(f);
-}
-
-string HttpServer::get_time() {
-    time_t t = time(nullptr);
-    //asctime():transform date and time to broken-down time or ASCII.
-    char *time = asctime(localtime(&t));
-    string res(time);
-    if (res[int(res.size()) - 1] == '\n')
-        res = res.substr(0, int(res.size()) - 1);
-    return res;
-}
-
-void HttpServer::handle_post(int client_sockfd, string buf) {
-    size_t buf_index = 0;
-    while (buf[buf_index++] != '/');
-    string method;
-    while (buf[buf_index++] != ' ') method += buf[buf_index - 1];
-    cout << method << endl;
-    try {
-        if (method == "login") {
-
-        }
-    } catch (...) {
-        cout << "post error..." << endl;
-    }
-}
-
-int HttpServer::get_port() {
-    return this->port;
 }
 
 int HttpServer::set_port(int new_port) {
@@ -116,13 +61,83 @@ int HttpServer::set_port(int new_port) {
     return this->port;
 }
 
-int HttpServer::get_backlog() {
-    return this->backlog;
-}
-
 int HttpServer::set_backlog(int new_backlog) {
     this->backlog = new_backlog;
     return this->backlog;
+}
+
+int HttpServer::on_message_begin() {
+    this->processor = nullptr;
+    this->head_fields.clear();
+    this->head_values.clear();
+    return 0;
+}
+
+int HttpServer::on_url(llhttp_t *parser, const char *at, size_t length) {
+    try {
+        processor = processor_factory.get_processor((llhttp_method) (parser->method));
+        if (processor == nullptr) return -1;
+        string url = string(at, length);
+        url = this->url_encoder.url_decode(url);
+        url = url.substr(1, url.size() - 1);
+        processor->set_url(url);
+        return 0;
+    } catch (exception &e) {
+        logger->error("错误： {} 第{}行 {}", __FILE__, __LINE__, e.what());
+        return -1;
+    }
+}
+
+int HttpServer::on_header_field(const char *at, size_t length) {
+    string field = string(at, length);
+    transform(field.begin(), field.end(), field.begin(), ::tolower);//全部转为小写字母
+    this->head_fields.emplace_back(field);
+    return 0;
+}
+
+int HttpServer::on_header_value(const char *at, size_t length) {
+    string value = string(at, length);
+    transform(value.begin(), value.end(), value.begin(), ::tolower);//全部转为小写字母
+    this->head_values.emplace_back(value);
+    return 0;
+}
+
+int HttpServer::on_headers_complete() {
+    if (this->head_fields.size() != this->head_values.size()) {
+        logger->error("head的field({})和value({})数量不匹配", this->head_fields.size(), this->head_values.size());
+        return -1;
+    }
+    size_t len = this->head_fields.size();
+    for (size_t i = 0; i < len; i++) {
+        this->processor->add_head(this->head_fields[i], this->head_values[i]);
+    }
+    return 0;
+}
+
+int HttpServer::on_body(const char *at, size_t len) {
+    string body = string(at, len);
+    if((processor->set_message_body(body)) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int HttpServer::on_message_complete() {
+    if(processor == nullptr) return -1;
+    return 0;
+}
+
+void HttpServer::handle_on_message_complete(llhttp_settings_t *settings) {
+    settings->on_message_begin = HttpServer::callback_on_message_begin;
+    settings->on_status = nullptr;
+    settings->on_chunk_header = nullptr;
+    settings->on_chunk_complete = nullptr;
+    settings->on_url = HttpServer::callback_on_url;
+    settings->on_header_field = HttpServer::callback_on_header_field;
+    settings->on_header_value = HttpServer::callback_on_header_value;
+    settings->on_headers_complete = HttpServer::callback_on_headers_complete;
+    settings->on_body = HttpServer::callback_on_body;
+    settings->on_message_complete = HttpServer::callback_on_message_complete;
 }
 
 void HttpServer::run() {
@@ -132,7 +147,7 @@ void HttpServer::run() {
     //创建epoll文件描述符
     epoll_fd = epoll_create1(0);//epoll_create1()相比epoll_create()，可以添加EPOLL_CLOEXEC等参数
     if (epoll_fd == -1) {
-        perror("create epoll failed!\n");
+        logger->error("创建epoll失败");
         exit(1);
     }
 
@@ -141,17 +156,19 @@ void HttpServer::run() {
 
     //将文件描述符添加到epoll实例epoll_fd中，注册监听事件
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sockfd, &event)) {//EPOLL_CTL_ADD:注册新的fd到epoll fd中
-        perror("add server_sockfd to epoll failed\n");
+        logger->error("server_sockfd添加到epoll失败");
         close(epoll_fd);
         exit(1);
     }
+    int client_sockfd;
+    ssize_t request_len;
 
     while (true) {
         string method;
 
         int event_count = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);//等待事件产生，类似于select的调用
         if (event_count < 0) {
-            perror("epoll_wait failed\n");
+            logger->error("epoll_wait失败: {}({})", __FILE__, __LINE__);
             continue;
         }
         for (int i = 0; i < event_count; i++) {
@@ -162,41 +179,38 @@ void HttpServer::run() {
                 memset(&client_address, 0, sizeof(client_address));
 
                 //accept a client connect.
-                int client_sockfd = accept(server_sockfd, (struct sockaddr *) &client_address, &socket_len);
+                client_sockfd = accept(server_sockfd, (struct sockaddr *) &client_address, &socket_len);
                 if (client_sockfd < 0) {
-                    perror("accept client failed");
+                    logger->error("ccept client失败");
                     continue;
                 }
                 event.data.fd = client_sockfd;
                 event.events = EPOLLIN;
                 if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sockfd, &event)) {
-                    perror("add client_sockfd to epoll failed\n");
+                    logger->error("client_sockfd添加到epoll失败");
                     continue;
                 }
             } else {
-                int client_sockfd = fd;
+                client_sockfd = fd;
                 memset(request_buf, '\0', sizeof(char) * N);
-                int request_len = read(client_sockfd, request_buf, N - 1);//last is '\0'.
-                string buf(request_buf);
-                //cout << buf << endl;
-                //cout << "****" << buf << "*****" <<endl;
-                cout << "[" << get_time() << "] ";
-                for (size_t buf_index = 0; buf_index < buf.size(); buf_index++) {
-                    if (buf[buf_index] == '/')break;
-                    method += buf[buf_index];
-                }
-                if (method.substr(0, 4) == "POST") {
-                    cout << method;
-                    handle_post(client_sockfd, buf);
+                if((request_len = read(client_sockfd, request_buf, N - 1)) < 0) {//last is '\0'.
+                    logger->error("client读取失败: {}({})", __FILE__, __LINE__);
+                    close(client_sockfd);
                     continue;
-                } else if (method.substr(0, 3) == "GET") {
-                    string file_name = get_request_file_name(buf);
-                    if (file_name.substr(0, 4) != "dir/") {
-                        file_name = path + '/' + file_name;
-                    }
-                    handle_get(client_sockfd, file_name);
                 }
-                close(client_sockfd);
+                enum llhttp_errno err = llhttp_execute(&http_parser, request_buf, request_len);
+                if (err == HPE_OK && processor != nullptr) {
+                    try {
+                        processor->set_client_sockfd(client_sockfd);
+                        processor->run();
+                    } catch (exception &e) {
+                        logger->error("请求执行失败{}: {}({})", e.what(), __FILE__, __LINE__);
+                        close(client_sockfd);
+                    }
+                } else {
+                    logger->error("http解析失败: {} {}", string(llhttp_errno_name(err)), http_parser.reason);
+                    close(client_sockfd);
+                }
             }
         }
     }
