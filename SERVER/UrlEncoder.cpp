@@ -47,7 +47,7 @@ string UrlEncoder::url_encode(const string &str)noexcept(false) {
         }
         return strTemp;
     } catch(exception &e) {
-        logger->error("错误： {} 第{}行 {}", __FILE__, __LINE__, e.what());
+        logger->error("错误：{}({})", __FILE__, __LINE__);
         throw e;
     }
 }
@@ -67,7 +67,7 @@ string UrlEncoder::url_decode(const string &str)noexcept(false) {
         }
         return strTemp;
     } catch(exception &e) {
-        logger->error("错误： {} 第{}行 {}", __FILE__, __LINE__, e.what());
+        logger->error("错误：{}({})", __FILE__, __LINE__);
         throw e;
     }
 }

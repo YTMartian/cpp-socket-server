@@ -11,8 +11,8 @@ all: server
 
 # 使用动态链接库： -L. <-l加去掉前缀lib和.so之后的名字>
 
-server: server.o HttpServer.o GetProcessor.o PostProcessor.o UrlEncoder.o ProcessorFactory.o libllhttp.so
-	$(CC) -no-pie server.o HttpServer.o GetProcessor.o PostProcessor.o UrlEncoder.o ProcessorFactory.o -o server -pthread -l sqlite3 -ljsoncpp -L. -lllhttp
+server: server.o HttpServer.o GetProcessor.o PostProcessor.o UrlEncoder.o ProcessorFactory.o Redis.o libllhttp.so
+	$(CC) -no-pie server.o HttpServer.o GetProcessor.o PostProcessor.o UrlEncoder.o ProcessorFactory.o Redis.o -o server -pthread -l sqlite3 -ljsoncpp -L. -lllhttp -L/usr/local/lib/ -lhiredis
 	rm *.o
 
 server.o: server.cpp
@@ -32,6 +32,9 @@ UrlEncoder.o: UrlEncoder.cpp
 
 ProcessorFactory.o: ProcessorFactory.cpp
 	$(CC)  $(OP) ProcessorFactory.cpp
+
+Redis.o: Redis.cpp
+	$(CC)  $(OP) Redis.cpp
 
 clean:
 	rm *.o

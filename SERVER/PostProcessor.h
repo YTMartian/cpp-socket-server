@@ -21,7 +21,7 @@ public:
 
     llhttp_method get_method() override;
 
-    int set_message_body(const string &body) override;
+    void set_message_body(const string &body) override;
 
 };
 

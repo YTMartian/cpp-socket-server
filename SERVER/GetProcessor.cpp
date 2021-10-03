@@ -2,6 +2,7 @@
 // Created by tim on 2021/9/26.
 //
 
+
 #include "GetProcessor.h"
 
 GetProcessor::GetProcessor() {
@@ -18,16 +19,18 @@ llhttp_method GetProcessor::get_method() {
     return this->method;
 }
 
-int GetProcessor::set_message_body(const string &body) {
+void GetProcessor::set_message_body(const string &body) {
 
 }
 
 void GetProcessor::send_file(const string &file_name) {
     string name = DIR_PATH + file_name;
     struct stat st{};
-    int f = -1;
+    int f;
     string response_head;
-    //首先判断该文件是否在DIR_PATH里，否则没有权限读取
+    //发送文件,TCP_CORK选项禁用Nagle
+    //int on = 1;
+    //setsockopt(client_sockfd, SOL_TCP, TCP_CORK, &on, sizeof(on));
 
     if (stat(name.c_str(), &st) < 0) {//文件不存在
         if ((write(client_sockfd, RESPONSE_404.c_str(), RESPONSE_404.size())) < 0) {
@@ -59,7 +62,7 @@ void GetProcessor::send_file(const string &file_name) {
         }
         response_head += "\r\n";//注意是http报文头和数据之间还有个空行
         if ((write(client_sockfd, response_head.c_str(), response_head.size())) < 0) {
-            logger->error("发送response头失败:{}({})", name, __FILE__, __LINE__);
+            logger->error("发送response头失败:{} {}({})", name, __FILE__, __LINE__);
             return;
         }
     }
@@ -67,19 +70,58 @@ void GetProcessor::send_file(const string &file_name) {
     if ((f = open(name.c_str(), O_RDONLY, 0)) < 0) { //BUG!! I writed ") < 0)){"
         logger->error("打开文件{}错误:{}({})", name, __FILE__, __LINE__);
         if ((write(client_sockfd, RESPONSE_500.c_str(), RESPONSE_500.size())) < 0) {
-            logger->error("发送response头失败:{}({})", name, __FILE__, __LINE__);
+            logger->error("发送response头失败:{} {}({})", name, __FILE__, __LINE__);
         }
         return;
     }
-    //发送文件
-    try{
-        if ((sendfile(client_sockfd, f, NULL, st.st_size)) < 0) {
-            logger->error("发送文件失败:{}({})", name, __FILE__, __LINE__);
+    //如果使用缓存且文件大小满足要求，则发送缓存文件内容
+    if (USE_REDIS && st.st_size <= CACHE_FILE_MAX_SIZE) {
+        try {
+            string value = redis->get(name);
+//            printf("*%s*", value.c_str());
+            if ((write(client_sockfd, value.c_str(), value.size())) < 0) {
+                logger->error("发送文件失败:{} {}({})", name, __FILE__, __LINE__);
+                close(f);
+                return;
+            }
+        } catch (int type) {
+//            printf("%d %d\n", type, REDIS_REPLY_NIL);
+            if (type == REDIS_REPLY_NIL) {//键不存在
+                string value;
+                ssize_t n;
+                while (true) {
+                    n = read(f, FILE_BUF, N);
+                    if (n == -1) {
+                        close(f);
+                        logger->error("文件读取失败:{} {}({})", name, __FILE__, __LINE__);
+                        return;
+                    }
+                    if (n == 0) {//EOF
+                        redis->set(name, value);
+                        break;
+                    } else {
+                        value += string(FILE_BUF);
+                    }
+                }
+                if ((write(client_sockfd, value.c_str(), value.size())) < 0) {
+                    logger->error("发送文件失败:{} {}({})", name, __FILE__, __LINE__);
+                    close(f);
+                    return;
+                }
+            } else {
+                close(f);
+                logger->error("redis读取失败{}:{} {}({})", type, name, __FILE__, __LINE__);
+                return;
+            }
         }
-        close(f);
-    } catch(exception &e) {
-        logger->error("发送文件失败:{}({})", name, __FILE__, __LINE__);
+    } else {
+        if ((sendfile(client_sockfd, f, nullptr, st.st_size)) < 0) {
+            logger->error("发送文件失败:{} {}({})", name, __FILE__, __LINE__);
+        }
     }
+    //on = 0;
+    //setsockopt(client_sockfd, SOL_TCP, TCP_CORK, &on, sizeof(on));
+    close(f);
 }
 
 void GetProcessor::run() {
@@ -87,8 +129,9 @@ void GetProcessor::run() {
     //判断url是方法还是获取一个文件,如果以'/'结尾的则说明是方法
     if (!url.empty() && url.back() != '/') {//是文件
         send_file(url);
+        close(client_sockfd);
     } else {
-
+        close(client_sockfd);
+        throw runtime_error("请求非文件");
     }
-    close(client_sockfd);
 }

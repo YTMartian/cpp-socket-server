@@ -4,7 +4,7 @@
 
 #include "HttpServer.h"
 
-HttpServer::HttpServer() {
+HttpServer::HttpServer(bool use_redis) {
     port = DEFAULT_PORT;
     backlog = DEFAULT_BACKLOG;
     request_buf = new char[N];
@@ -12,6 +12,19 @@ HttpServer::HttpServer() {
     client_address = new struct sockaddr_in;
     http_parser_settings = new llhttp_settings_t;
     processor = nullptr;
+    USE_REDIS = use_redis;
+    if (USE_REDIS) {
+        redis = new Redis();
+        try {
+            redis->connect();
+            logger->info("redis连接成功.");
+            spdlog::info("redis连接成功.");
+        } catch (exception &e) {
+            USE_REDIS = false;
+            delete redis;
+            redis = nullptr;
+        }
+    } else redis = nullptr;
 
     llhttp_settings_init(http_parser_settings);
     //设置回调函数
@@ -24,6 +37,7 @@ HttpServer::~HttpServer() {
     delete[] request_buf;
     delete server_address;
     delete client_address;
+    delete redis;//nullptr也可delete
 }
 
 int HttpServer::get_ipv4_socket_bind_and_listen() {
@@ -34,13 +48,13 @@ int HttpServer::get_ipv4_socket_bind_and_listen() {
 
     //建立socket.
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        logger->error("socket建立失败.");
-        spdlog::error("socket建立失败.");
+        logger->error("socket建立失败:{}({})", __FILE__, __LINE__);
+        spdlog::error("socket建立失败:{}({})", __FILE__, __LINE__);
         exit(EXIT_FAILURE);//exit(1)
     }
     if ((bind(server_fd, (struct sockaddr *) server_address, sizeof(struct sockaddr))) < 0) {
-        logger->error("socket建立失败.");
-        spdlog::error("socket建立失败.");
+        logger->error("socket建立失败,端口{}已占用", port);
+        spdlog::error("socket建立失败,端口{}已占用", port);
         exit(EXIT_FAILURE);
     }
     logger->info("socket建立成功.");
@@ -51,8 +65,8 @@ int HttpServer::get_ipv4_socket_bind_and_listen() {
         spdlog::error("启动监听失败.");
         exit(EXIT_FAILURE);
     }
-    logger->info("监听端口: {}", port);
-    spdlog::info("监听端口: {}", port);
+    logger->info("监听端口:{}", port);
+    spdlog::info("监听端口:{}", port);
     return server_fd;
 }
 
@@ -75,15 +89,17 @@ int HttpServer::on_message_begin() {
 
 int HttpServer::on_url(llhttp_t *parser, const char *at, size_t length) {
     try {
-        processor = processor_factory.get_processor((llhttp_method) (parser->method));
+        processor = ProcessorFactory::get_processor((llhttp_method) (parser->method));
         if (processor == nullptr) return -1;
         string url = string(at, length);
         url = this->url_encoder.url_decode(url);
         url = url.substr(1, url.size() - 1);
         processor->set_url(url);
+        processor->set_redis(this->redis);
+        processor->set_use_redis(USE_REDIS);
         return 0;
     } catch (exception &e) {
-        logger->error("错误： {} 第{}行 {}", __FILE__, __LINE__, e.what());
+        logger->error("错误：{}({})", __FILE__, __LINE__);
         return -1;
     }
 }
@@ -116,14 +132,16 @@ int HttpServer::on_headers_complete() {
 
 int HttpServer::on_body(const char *at, size_t len) {
     string body = string(at, len);
-    if((processor->set_message_body(body)) < 0) {
+    try {
+        processor->set_message_body(body);
+    } catch (exception &e) {
         return -1;
     }
     return 0;
 }
 
 int HttpServer::on_message_complete() {
-    if(processor == nullptr) return -1;
+    if (processor == nullptr) return -1;
     return 0;
 }
 
@@ -181,7 +199,7 @@ void HttpServer::run() {
                 //accept a client connect.
                 client_sockfd = accept(server_sockfd, (struct sockaddr *) &client_address, &socket_len);
                 if (client_sockfd < 0) {
-                    logger->error("ccept client失败");
+                    logger->error("accept client失败:{}({})", __FILE__, __LINE__);
                     continue;
                 }
                 event.data.fd = client_sockfd;
@@ -193,7 +211,7 @@ void HttpServer::run() {
             } else {
                 client_sockfd = fd;
                 memset(request_buf, '\0', sizeof(char) * N);
-                if((request_len = read(client_sockfd, request_buf, N - 1)) < 0) {//last is '\0'.
+                if ((request_len = read(client_sockfd, request_buf, N - 1)) < 0) {//last is '\0'.
                     logger->error("client读取失败: {}({})", __FILE__, __LINE__);
                     close(client_sockfd);
                     continue;
@@ -204,7 +222,7 @@ void HttpServer::run() {
                         processor->set_client_sockfd(client_sockfd);
                         processor->run();
                     } catch (exception &e) {
-                        logger->error("请求执行失败{}: {}({})", e.what(), __FILE__, __LINE__);
+                        logger->error("请求执行失败: {}({})", __FILE__, __LINE__);
                         close(client_sockfd);
                     }
                 } else {

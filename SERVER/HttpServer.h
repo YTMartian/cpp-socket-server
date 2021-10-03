@@ -11,6 +11,7 @@
 #include "PostProcessor.h"
 #include "ProcessorFactory.h"
 #include "UrlEncoder.h"
+#include "Redis.h"
 
 class HttpServer {
 private:
@@ -28,10 +29,12 @@ private:
     llhttp_t http_parser;
     llhttp_settings_t *http_parser_settings;
     UrlEncoder url_encoder;
-    vector<string>head_fields, head_values;//临时存放heads
+    vector<string> head_fields, head_values;//临时存放heads
+    Redis *redis;
+    bool USE_REDIS;
 public:
 
-    HttpServer();
+    HttpServer(bool use_redis=false);
 
     ~HttpServer();
 

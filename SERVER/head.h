@@ -11,7 +11,7 @@
 #include <unistd.h>//close(), read(), getopt(), alarm()
 #include <sys/types.h>
 #include <sys/un.h>
-#include <sys/socket.h>
+#include <sys/socket.h>//socket()、setsockopt()
 #include <netinet/in.h>//struct sockaddr_in
 #include <fcntl.h>//open()
 #include <time.h>
@@ -33,6 +33,8 @@
 #include <exception>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <hiredis/hiredis.h>
+#include <netinet/tcp.h>
 
 using namespace std;
 
@@ -53,6 +55,10 @@ const size_t LOG_MAX_SIZE = 1048576 * 10;
 const size_t LOG_MAX_FILES = 5;
 //声明为inline，否则会报multiple definition of的编译错误
 inline shared_ptr<spdlog::logger> logger = spdlog::rotating_logger_mt("my_log", LOG_DIR + "rotating.txt", LOG_MAX_SIZE, LOG_MAX_FILES);
+
+//static bool USE_REDIS = true;
+const int CACHE_FILE_MAX_SIZE = 1024 * 100;//将不超过CACHE_FILE_MAX_SIZE字节的文件缓存
+static char FILE_BUF[N];
 
 /******************
 定义http mime

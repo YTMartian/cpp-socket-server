@@ -14,12 +14,11 @@ void PostProcessor::set_client_sockfd(int new_fd) {
     client_sockfd = new_fd;
 }
 
-int PostProcessor::set_message_body(const string &body) {
+void PostProcessor::set_message_body(const string &body) {
     if (!json_reader.parse(body, message_body, false)) {
         logger->error("post json数据解析失败:{}({})", __FILE__, __LINE__);
-        return -1;
+        throw runtime_error("post设置body失败");
     }
-    return 0;
 }
 
 llhttp_method PostProcessor::get_method() {
