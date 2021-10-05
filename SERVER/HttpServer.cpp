@@ -25,12 +25,14 @@ HttpServer::HttpServer(bool use_redis) {
             redis = nullptr;
         }
     } else redis = nullptr;
-
+    /**********************************************************************************/
+    /*当部署到云服务器时，把以下的初始化llhttp的代码放到enum llhttp_errno err = llhttp_execute(&http_parser, request_buf, request_len);前面，否则llhttp只会解析一次，具体原因未知*/
     llhttp_settings_init(http_parser_settings);
     //设置回调函数
-    handle_on_message_complete(http_parser_settings);
+    set_callbacks(http_parser_settings);
     llhttp_init(&http_parser, HTTP_REQUEST, http_parser_settings);
     http_parser.data = this;//一定要先绑定，否则reinterpret_cast时有问题，找了半天错
+    /**********************************************************************************/
 }
 
 HttpServer::~HttpServer() {
@@ -145,7 +147,7 @@ int HttpServer::on_message_complete() {
     return 0;
 }
 
-void HttpServer::handle_on_message_complete(llhttp_settings_t *settings) {
+void HttpServer::set_callbacks(llhttp_settings_t *settings) {
     settings->on_message_begin = HttpServer::callback_on_message_begin;
     settings->on_status = nullptr;
     settings->on_chunk_header = nullptr;
@@ -182,8 +184,6 @@ void HttpServer::run() {
     ssize_t request_len;
 
     while (true) {
-        string method;
-
         int event_count = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);//等待事件产生，类似于select的调用
         if (event_count < 0) {
             logger->error("epoll_wait失败: {}({})", __FILE__, __LINE__);
@@ -203,7 +203,7 @@ void HttpServer::run() {
                     continue;
                 }
                 event.data.fd = client_sockfd;
-                event.events = EPOLLIN;
+                event.events = EPOLLIN | EPOLLET;//边缘触发
                 if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sockfd, &event)) {
                     logger->error("client_sockfd添加到epoll失败");
                     continue;
@@ -212,7 +212,12 @@ void HttpServer::run() {
                 client_sockfd = fd;
                 memset(request_buf, '\0', sizeof(char) * N);
                 if ((request_len = read(client_sockfd, request_buf, N - 1)) < 0) {//last is '\0'.
-                    logger->error("client读取失败: {}({})", __FILE__, __LINE__);
+                    if(request_len < 0) logger->error("client读取失败: {}({})", __FILE__, __LINE__);
+                    close(client_sockfd);
+                    continue;
+                }
+                if (request_len == N - 1) {
+                    logger->error("请求过大(最大长度{}): {}({})", N, __FILE__, __LINE__);
                     close(client_sockfd);
                     continue;
                 }
@@ -226,11 +231,10 @@ void HttpServer::run() {
                         close(client_sockfd);
                     }
                 } else {
-                    logger->error("http解析失败: {} {}", string(llhttp_errno_name(err)), http_parser.reason);
+                    logger->error("http解析失败: {} {}", string(llhttp_errno_name(err)), string(http_parser.reason));
                     close(client_sockfd);
                 }
             }
         }
     }
-
 }

@@ -6,6 +6,7 @@
 
 PostProcessor::PostProcessor() {
     this->method = llhttp_method::HTTP_POST;
+    keep_alive = false;
 }
 
 PostProcessor::~PostProcessor() = default;

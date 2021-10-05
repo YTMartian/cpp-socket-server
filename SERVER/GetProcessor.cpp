@@ -7,6 +7,7 @@
 
 GetProcessor::GetProcessor() {
     this->method = llhttp_method::HTTP_GET;
+    keep_alive = false;
 }
 
 GetProcessor::~GetProcessor() = default;
@@ -20,7 +21,45 @@ llhttp_method GetProcessor::get_method() {
 }
 
 void GetProcessor::set_message_body(const string &body) {
-
+    message_body["file_name"] = "";//文件名或url中的api方法只能有一个非空
+    message_body["api"] = "";
+    //找到'?'位置界定非参部分
+    size_t index1 = 0;//记录问号的位置
+    size_t index2 = 0;//记录点的位置
+    while (index1 < body.size()) {
+        if (body[index1] == '?') {
+            break;
+        } else if (body[index1] == '.') {
+            index2 = index1;
+        }
+        index1++;
+    }
+    if (index2 == 0 || index2 == index1 - 1) {//说明不是请求静态文件
+        message_body["api"] = body.substr(0, index1);
+    } else {
+        message_body["file_name"] = body.substr(0, index1);
+        message_body["file_type"] = body.substr(index2, index1 - index2);
+    }
+    if (index1 == body.size()) return;
+    //url中的参数形如为a=1&b=2&c=3...
+    string s = body.substr(index1 + 1);
+    stringstream ss;
+    ss.str(s);
+    char split = '&';
+    string ans;
+    size_t i;//记录等号位置
+    while (getline(ss, ans, split)) {
+        i = 0;
+        while (i < ans.size()) {
+            if (ans[i] == '=') break;
+            i++;
+        }
+        if (i >= ans.size() - 1 || i == 0) throw runtime_error("");
+        Json::Value param;
+        param["field"] = ans.substr(0, i);
+        param["value"] = ans.substr(i + 1);
+        message_body.append(param);
+    }
 }
 
 void GetProcessor::send_file(const string &file_name) {
@@ -51,12 +90,14 @@ void GetProcessor::send_file(const string &file_name) {
         response_head = RESPONSE_200;
         response_head += "Accept-Ranges: bytes\r\n";
         response_head += "Content-Length:" + to_string(st.st_size) + "\r\n";
-        string type;
-        for (size_t i = file_name.size() - 1; ~i; i--) {
-            type.push_back(file_name[i]);
-            if (file_name[i] == '.') break;
+        if (heads["connection"] == "keep-alive") {
+            keep_alive = true;
+            response_head += "Connection:keep-alive\r\nKeep-Alive: timeout=" + to_string(KEEPALIVE_TIMEOUT) + "\r\n";
+        } else {
+            keep_alive = false;
+            response_head += "Connection:close\r\n";
         }
-        reverse(type.begin(), type.end());
+        string type = message_body["file_type"].asString();
         if (CONTENT_TYPE.find(type) != CONTENT_TYPE.end()) {
             response_head += "Content-Type: " + CONTENT_TYPE.at(type) + "\r\n";
         }
@@ -78,14 +119,12 @@ void GetProcessor::send_file(const string &file_name) {
     if (USE_REDIS && st.st_size <= CACHE_FILE_MAX_SIZE) {
         try {
             string value = redis->get(name);
-//            printf("*%s*", value.c_str());
             if ((write(client_sockfd, value.c_str(), value.size())) < 0) {
                 logger->error("发送文件失败:{} {}({})", name, __FILE__, __LINE__);
                 close(f);
                 return;
             }
         } catch (int type) {
-//            printf("%d %d\n", type, REDIS_REPLY_NIL);
             if (type == REDIS_REPLY_NIL) {//键不存在
                 string value;
                 ssize_t n;
@@ -118,20 +157,30 @@ void GetProcessor::send_file(const string &file_name) {
         if ((sendfile(client_sockfd, f, nullptr, st.st_size)) < 0) {
             logger->error("发送文件失败:{} {}({})", name, __FILE__, __LINE__);
         }
+        close(f);
     }
     //on = 0;
     //setsockopt(client_sockfd, SOL_TCP, TCP_CORK, &on, sizeof(on));
-    close(f);
+//    close(f);
 }
 
 void GetProcessor::run() {
     logger->info("{} {}", llhttp_method_name(this->method), this->url);
+    try {
+        set_message_body(this->url);
+    }
+    catch (exception &e) {
+        logger->error("url解析出错:{}({})", __FILE__, __LINE__);
+        throw e;
+    }
     //判断url是方法还是获取一个文件,如果以'/'结尾的则说明是方法
-    if (!url.empty() && url.back() != '/') {//是文件
-        send_file(url);
-        close(client_sockfd);
-    } else {
-        close(client_sockfd);
+    string file_name = message_body["file_name"].asString();
+    if (!file_name.empty()) {//是文件
+        send_file(file_name);
+    } else {//不是获取静态文件，则执行相应的get方法
         throw runtime_error("请求非文件");
+    }
+    if (!keep_alive) {
+        close(client_sockfd);
     }
 }

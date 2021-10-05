@@ -19,14 +19,14 @@ private:
     struct sockaddr_in *client_address{};
     int port;
     int backlog;
-    int server_sockfd;
+    int server_sockfd{};
     char *request_buf;
-    int epoll_fd;
+    int epoll_fd{};
     struct epoll_event event{};
-    struct epoll_event events[MAX_EVENTS];//events:即wait event
+    struct epoll_event events[MAX_EVENTS]{};//events:即wait event
     Processor *processor;
     ProcessorFactory processor_factory;
-    llhttp_t http_parser;
+    llhttp_t http_parser{};
     llhttp_settings_t *http_parser_settings;
     UrlEncoder url_encoder;
     vector<string> head_fields, head_values;//临时存放heads
@@ -34,7 +34,7 @@ private:
     bool USE_REDIS;
 public:
 
-    HttpServer(bool use_redis=false);
+    explicit HttpServer(bool use_redis=false);
 
     ~HttpServer();
 
@@ -45,7 +45,7 @@ public:
 
     int set_backlog(int new_backlog);
 
-    void handle_on_message_complete(llhttp_settings_t *settings);
+    void set_callbacks(llhttp_settings_t *settings);
 
     void run();
 /*

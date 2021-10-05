@@ -21,7 +21,7 @@ public:
 
     llhttp_method get_method() override;
 
-    void set_message_body(const string &body) override;//get方法的body就是url后的一堆参数a=1&b=2之类的
+    void set_message_body(const string &body) override;//get方法的body就是url后的一堆参数?a=1&b=2之类的
 };
 
 

@@ -21,6 +21,7 @@ protected:
     Json::Value message_body;
     Redis *redis;
     bool USE_REDIS;
+    bool keep_alive;
 public:
 
     virtual void run() = 0;//开始执行

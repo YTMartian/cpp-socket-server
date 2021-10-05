@@ -21,7 +21,6 @@
 #include <vector>
 #include <pthread.h>
 #include <utility>
-#include <sqlite3.h>
 #include <assert.h>
 #include <fstream>
 #include <dirent.h>
@@ -33,38 +32,41 @@
 #include <exception>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 #include <hiredis/hiredis.h>
 #include <netinet/tcp.h>
+#include <csignal>
 
 using namespace std;
 
 
-const int N = 4096;
+#define N 4096
 const string DIR_PATH = "../www/";
 const string LOG_DIR = "../logs/";
-const int MAX_EVENTS = 100;
-const int DEFAULT_PORT = 12345;
-const int DEFAULT_BACKLOG = 128;//max contain un-handle connects.
+#define MAX_EVENTS 256
+#define DEFAULT_PORT  12345
+#define DEFAULT_BACKLOG 128//max contain un-handle connects.
+#define KEEPALIVE_TIMEOUT 500//ms
 const string RESPONSE_200 = "HTTP/1.1 200 OK\r\n";
 const string RESPONSE_403 = "HTTP/1.1 403 Forbidden\r\n\r\n";//注意是http报文头和数据之间还有个空行
 const string RESPONSE_404 = "HTTP/1.1 404 Not Found\r\n\r\n";
 const string RESPONSE_500 = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
 
 // 创建一个最大LOG_MAX_SIZE MB大小和LOG_MAX_FILES个滚动文件的滚动日志
-const size_t LOG_MAX_SIZE = 1048576 * 10;
-const size_t LOG_MAX_FILES = 5;
+#define LOG_MAX_SIZE (1048576 * 10)
+#define LOG_MAX_FILES 5
 //声明为inline，否则会报multiple definition of的编译错误
-inline shared_ptr<spdlog::logger> logger = spdlog::rotating_logger_mt("my_log", LOG_DIR + "rotating.txt", LOG_MAX_SIZE, LOG_MAX_FILES);
-
+//inline auto logger = spdlog::rotating_logger_mt("my_log", LOG_DIR + "rotating.txt", LOG_MAX_SIZE, LOG_MAX_FILES);
+inline auto logger = make_shared<spdlog::logger>("my_log", make_shared<spdlog::sinks::stdout_color_sink_mt>());//输出到屏幕
 //static bool USE_REDIS = true;
-const int CACHE_FILE_MAX_SIZE = 1024 * 100;//将不超过CACHE_FILE_MAX_SIZE字节的文件缓存
-static char FILE_BUF[N];
+#define CACHE_FILE_MAX_SIZE (1024 * 100)//将不超过CACHE_FILE_MAX_SIZE字节的文件缓存
+inline char FILE_BUF[N];
 
 /******************
 定义http mime
 ******************/
 //const型的map不能通过[]获取值，而要用map.at()函数
-const map<string, string> CONTENT_TYPE = {
+inline map<string, string> CONTENT_TYPE = {
         {".aac",    "audio/aac"},
         {".abw",    "application/x-abiword"},
         {".arc",    "application/x-freearc"},

@@ -1,12 +1,21 @@
 #include "head.h"
 #include "HttpServer.h"
 
+void sig_pipe(int signo) {
+    logger->warn("捕获信号:SIGPIPE({})", signo);
+}
 
 int main(int argc, char **argv) {
 
+    //绑定信号处理函数
+    if((signal(SIGPIPE,sig_pipe) == SIG_ERR)) {
+        spdlog::error("绑定信号处理函数失败:{}({})", __FILE__, __LINE__);
+        exit(1);
+    }
+
     int port = DEFAULT_PORT;
     int backlog = DEFAULT_BACKLOG;
-    bool use_redis = true;
+    bool use_redis = false;
 
     char c;
     //处理长参数:https://www.gnu.org/software/libc/manual/html_node/Getopt-Long-Option-Example.html#Getopt-Long-Option-Example
