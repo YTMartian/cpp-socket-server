@@ -21,7 +21,7 @@
 - 安装jsoncpp：`sudo apt install -y libjsoncpp-dev`
 - 安装redis：`sudo apt install -y redis-server && systemctl start redis`
 - 安装hiredis：`sudo apt install -y libhiredis-dev`
-- 安装spdlog：`sudo apt install -y libspdlog-dev` 或 `apt install -y libssl-dev && apt install -y cmake && wget https://github.com/Kitware/CMake/releases/download/v3.21.3/cmake-3.21.3.tar.gz &&  tar -zxvf cmake-3.21.3.tar.gz && cd cmake-3.21.3/ && cmake . &&  make && make install && git clone https://github.com/gabime/spdlog.git && cd spdlog && mkdir build && cd build && cmake .. && make -j && make install`
+- 安装spdlog：`sudo apt install -y libspdlog-dev`
 - 安装llhttp：`git clone https://github.com/nodejs/llhttp.git && cd llhttp && sudo apt install -y npm && sudo npm install typescript && sudo apt install -y clang && sudo make && sudo make install && sudo cp build/libllhttp.so build/llhttp.h <makefile所在目录>`
 - 添加共享库文件目录：`vim /etc/ld.so.conf`并添加一行`/usr/local/lib`然后刷新`/sbin/ldconfig -v`
 
