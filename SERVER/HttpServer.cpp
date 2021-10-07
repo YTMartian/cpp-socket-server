@@ -4,15 +4,18 @@
 
 #include "HttpServer.h"
 
-HttpServer::HttpServer(bool use_redis) {
+HttpServer::HttpServer(bool use_redis, bool use_multithread) {
     port = DEFAULT_PORT;
     backlog = DEFAULT_BACKLOG;
     request_buf = new char[N];
     server_address = new struct sockaddr_in;
     client_address = new struct sockaddr_in;
     http_parser_settings = new llhttp_settings_t;
+    thread_pool = nullptr;
+    redis = nullptr;
     processor = nullptr;
     USE_REDIS = use_redis;
+    USE_MULTITHREAD = use_multithread;
     if (USE_REDIS) {
         redis = new Redis();
         try {
@@ -24,14 +27,21 @@ HttpServer::HttpServer(bool use_redis) {
             delete redis;
             redis = nullptr;
         }
-    } else redis = nullptr;
+    }
+    if (USE_MULTITHREAD) {
+        thread_pool = new ThreadPool();
+        auto num = thread::hardware_concurrency();
+        if (num == 0) num = 1;
+        logger->info("启用多线程:线程数{}", num);
+        spdlog::info("启用多线程:线程数{}", num);
+    }
+
+    llhttp_settings_init(http_parser_settings);
+    set_callbacks(http_parser_settings);//设置回调函数
     /**********************************************************************************/
     /*当部署到云服务器时，把以下的初始化llhttp的代码放到enum llhttp_errno err = llhttp_execute(&http_parser, request_buf, request_len);前面，否则llhttp只会解析一次，具体原因未知*/
-    llhttp_settings_init(http_parser_settings);
-    //设置回调函数
-    set_callbacks(http_parser_settings);
-    llhttp_init(&http_parser, HTTP_REQUEST, http_parser_settings);
-    http_parser.data = this;//一定要先绑定，否则reinterpret_cast时有问题，找了半天错
+//    llhttp_init(&http_parser, HTTP_BOTH, http_parser_settings);
+//    http_parser.data = this;//一定要先绑定，否则reinterpret_cast时有问题，找了半天错
     /**********************************************************************************/
 }
 
@@ -40,6 +50,7 @@ HttpServer::~HttpServer() {
     delete server_address;
     delete client_address;
     delete redis;//nullptr也可delete
+    delete thread_pool;
 }
 
 int HttpServer::get_ipv4_socket_bind_and_listen() {
@@ -91,7 +102,7 @@ int HttpServer::on_message_begin() {
 
 int HttpServer::on_url(llhttp_t *parser, const char *at, size_t length) {
     try {
-        processor = ProcessorFactory::get_processor((llhttp_method) (parser->method));
+        processor = shared_ptr<Processor>(ProcessorFactory::get_processor((llhttp_method) (parser->method)));
         if (processor == nullptr) return -1;
         string url = string(at, length);
         url = this->url_encoder.url_decode(url);
@@ -176,25 +187,26 @@ void HttpServer::run() {
 
     //将文件描述符添加到epoll实例epoll_fd中，注册监听事件
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sockfd, &event)) {//EPOLL_CTL_ADD:注册新的fd到epoll fd中
-        logger->error("server_sockfd添加到epoll失败");
+        logger->error("server_sockfd添加到epoll失败:{}({}) errno:{}", __FILE__, __LINE__, errno);
         close(epoll_fd);
         exit(1);
     }
     int client_sockfd;
     ssize_t request_len;
+    int fd;
 
     while (true) {
         int event_count = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);//等待事件产生，类似于select的调用
         if (event_count < 0) {
-            logger->error("epoll_wait失败: {}({})", __FILE__, __LINE__);
+            logger->error("epoll_wait失败: {}({}) errno:{}", __FILE__, __LINE__, errno);
             continue;
         }
         for (int i = 0; i < event_count; i++) {
-            int fd = events[i].data.fd;
+            fd = events[i].data.fd;
             if (fd == server_sockfd) {
                 //use socklen_t or in accept() use (socklen_t *)&socket_len.
                 socklen_t socket_len = sizeof(struct sockaddr_in);
-                memset(&client_address, 0, sizeof(client_address));
+                memset(&client_address, 0, sizeof(*client_address));
 
                 //accept a client connect.
                 client_sockfd = accept(server_sockfd, (struct sockaddr *) &client_address, &socket_len);
@@ -204,15 +216,26 @@ void HttpServer::run() {
                 }
                 event.data.fd = client_sockfd;
                 event.events = EPOLLIN | EPOLLET;//边缘触发
-                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sockfd, &event)) {
-                    logger->error("client_sockfd添加到epoll失败");
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sockfd, &event) < 0) {
+                    logger->error("client_sockfd添加到epoll失败:{}({}) errno:{}", __FILE__, __LINE__, errno);
                     continue;
                 }
             } else {
+                // 排除错误事件
+//                if ((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) || (!(events[i].events & EPOLLIN))) {
+//                    //https://stackoverflow.com/questions/46987302/epoll-does-it-silently-remove-fds
+//                    //epoll会自动移除已经关闭的fd(引用计数为0)
+//                    //if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &event) < 0) {
+//                    //    logger->error("epoll删除client_sockfd失败:{}({}) errno:{}", __FILE__, __LINE__, errno);
+//                    //}
+//                    logger->error("错误事件:{}({})", __FILE__, __LINE__);
+//                    close(fd);
+//                    continue;
+//                }
                 client_sockfd = fd;
                 memset(request_buf, '\0', sizeof(char) * N);
                 if ((request_len = read(client_sockfd, request_buf, N - 1)) < 0) {//last is '\0'.
-                    if(request_len < 0) logger->error("client读取失败: {}({})", __FILE__, __LINE__);
+                    logger->error("client读取失败: {}({})", __FILE__, __LINE__);
                     close(client_sockfd);
                     continue;
                 }
@@ -221,17 +244,27 @@ void HttpServer::run() {
                     close(client_sockfd);
                     continue;
                 }
+                llhttp_init(&http_parser, HTTP_BOTH, http_parser_settings);
+                http_parser.data = this;//一定要先绑定，否则reinterpret_cast时有问题，找了半天错
                 enum llhttp_errno err = llhttp_execute(&http_parser, request_buf, request_len);
                 if (err == HPE_OK && processor != nullptr) {
                     try {
                         processor->set_client_sockfd(client_sockfd);
-                        processor->run();
+                        if (USE_MULTITHREAD) {
+                            //请求由主线程解析，然后由线程池进行具体处理
+                            thread_pool->addWork(processor);
+                        } else {
+                            processor->run();
+                            if (!processor->get_keep_alive()) {
+                                close(client_sockfd);
+                            }
+                        }
                     } catch (exception &e) {
                         logger->error("请求执行失败: {}({})", __FILE__, __LINE__);
                         close(client_sockfd);
                     }
                 } else {
-                    logger->error("http解析失败: {} {}", string(llhttp_errno_name(err)), string(http_parser.reason));
+                    logger->error("http解析失败: {}({})", __FILE__, __LINE__);
                     close(client_sockfd);
                 }
             }

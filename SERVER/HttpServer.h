@@ -12,6 +12,7 @@
 #include "ProcessorFactory.h"
 #include "UrlEncoder.h"
 #include "Redis.h"
+#include "ThreadPool.h"
 
 class HttpServer {
 private:
@@ -24,17 +25,19 @@ private:
     int epoll_fd{};
     struct epoll_event event{};
     struct epoll_event events[MAX_EVENTS]{};//events:即wait event
-    Processor *processor;
-    ProcessorFactory processor_factory;
+//    Processor *processor;
+    shared_ptr<Processor>processor;//用智能指针管理，防止莫名其妙的错误，比如并发时多线程里必须得close(client_sockfd)才行
     llhttp_t http_parser{};
     llhttp_settings_t *http_parser_settings;
     UrlEncoder url_encoder;
     vector<string> head_fields, head_values;//临时存放heads
     Redis *redis;
     bool USE_REDIS;
+    bool USE_MULTITHREAD;
+    ThreadPool *thread_pool;
 public:
 
-    explicit HttpServer(bool use_redis=false);
+    explicit HttpServer(bool use_redis = false, bool use_multithread = true);
 
     ~HttpServer();
 

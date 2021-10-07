@@ -13,7 +13,7 @@ private:
 public:
     PostProcessor();
 
-    ~PostProcessor();
+    ~PostProcessor() override;
 
     void run() override;
 

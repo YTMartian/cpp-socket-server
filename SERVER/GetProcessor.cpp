@@ -81,15 +81,29 @@ void GetProcessor::send_file(const string &file_name) {
         /* S_ISREG:是否是一个常规文件
          * S_IRUSR:所有者拥有读权限
          */
-        if ((write(client_sockfd, RESPONSE_403.c_str(), RESPONSE_403.size())) < 0) {
+        while ((write(client_sockfd, RESPONSE_403.c_str(), RESPONSE_403.size())) < 0) {
             logger->error("获取文件{}信息失败:{}({})", name, __FILE__, __LINE__);
         }
         logger->error("文件不可读:{}", name);
         return;
     } else {
+        //先判断文件是否修改
+        struct tm tm{};
+        localtime_r(&(st.st_mtime), &tm);
+        char time_buf[40];
+        strftime(time_buf, 40,  "%a, %d %b %Y %H:%M:%S GMT", &tm);
+        string last_modified(time_buf);
+        transform(last_modified.begin(), last_modified.end(), last_modified.begin(), ::tolower);
+        if(heads["if-modified-since"] == last_modified) {//如果文件未被修改
+            if ((write(client_sockfd, RESPONSE_304.c_str(), RESPONSE_304.size())) < 0) {
+                logger->error("发送response头(304)失败:{} {}({})", name, __FILE__, __LINE__);
+            }
+            return;
+        }
         response_head = RESPONSE_200;
         response_head += "Accept-Ranges: bytes\r\n";
         response_head += "Content-Length:" + to_string(st.st_size) + "\r\n";
+        response_head += "Last-Modified: " + last_modified + "\r\n";
         if (heads["connection"] == "keep-alive") {
             keep_alive = true;
             response_head += "Connection:keep-alive\r\nKeep-Alive: timeout=" + to_string(KEEPALIVE_TIMEOUT) + "\r\n";
@@ -102,9 +116,12 @@ void GetProcessor::send_file(const string &file_name) {
             response_head += "Content-Type: " + CONTENT_TYPE.at(type) + "\r\n";
         }
         response_head += "\r\n";//注意是http报文头和数据之间还有个空行
-        if ((write(client_sockfd, response_head.c_str(), response_head.size())) < 0) {
-            logger->error("发送response头失败:{} {}({})", name, __FILE__, __LINE__);
-            return;
+        while ((write(client_sockfd, response_head.c_str(), response_head.size())) <= 0) {
+            if(errno == EINTR) continue;//执行过程中遇到了中断
+            else {
+                logger->error("发送response头(200)失败:{} {}({}) errno:{}", name, __FILE__, __LINE__, errno);
+                return;
+            }
         }
     }
     //打开文件
@@ -179,8 +196,5 @@ void GetProcessor::run() {
         send_file(file_name);
     } else {//不是获取静态文件，则执行相应的get方法
         throw runtime_error("请求非文件");
-    }
-    if (!keep_alive) {
-        close(client_sockfd);
     }
 }

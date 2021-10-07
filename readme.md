@@ -1,20 +1,21 @@
 ﻿Unix/Linux下的高并发高容错服务器示例[cpp-socket-server
 ](https://github.com/YTMartian/cpp-socket-server)
 
-[Demo](http://123.56.182.46:12345/test.html)
+[Demo](http://123.56.182.46:12345/index.html)
 
 #### 功能
 
 * [x] 请求：GET、POST
-* [x] 状态码： 200、403、404、500
+* [x] 状态码（见[测试](#state)）
 * [x] 较高并发（见[测试](#concurrency)）
+* [x] 线程池任务分发
 * [x] json格式解析（jsoncpp）
 * [x] http报文解析（llhttp）
 * [x] 缓存（redis）
 * [x] url编解码
 * [x] 滚动日志记录（spdlog）
 * [x] 较高容错（异常信号捕获与处理）
-* [x] 长连接（keep-alive）
+* [x] HTTP报头处理（见[测试](#head)）
 
 #### 环境
 
@@ -31,7 +32,7 @@
 
 1. 进入SERVER里, 清除生成的.o文件 : `make clean`
 2. 执行make命令：`make`(debug：`make debug=true`, `gdb ./server`后run，或使用valgrind调试`valgrind ./server`)
-3. 运行服务端: `./server [-p <端口号>] [-b <backlog>] [-c <true/false(是否使用缓存，默认不使用)>]`,  默认端口12345，也可指定端口，如：./server -p 6666
+3. 运行服务端: `./server [-p <端口号>] [-b <backlog>] [-c <true/false(是否使用缓存，默认不使用)>] [-t <true/false(是否使用多线程，默认使用)>]`,  默认端口12345，也可指定端口，如：./server -p 6666
 4. 性能测试： 在`TEST/` 下有`multithreading/`、`origin/`、`select/`和`epoll/`四个文件夹分别对多线程、原始单路IO、select和epoll进行get性能测试，get的文件存放到`www/`里，编译运行后在其它窗口使用ab工具进行性能测试 (sudo apt-get install apache2-utils)
 
 #### 最大线程数
@@ -43,19 +44,41 @@
 
 #### 测试
 
-- UML图：
+- <span id="state">状态码</span>
 
+|状态码|说明|
+|:--|:--|
+|200|OK|
+|304|Not Modified|
+|403|Forbidden|
+|404|Not Found|
+|500|Internal Server Error|
 
+- <span id="head">报头</span>
 
+|请求报头|响应报头|
+|:--|:--|
+|connection|connection|
+|If-Modified-Since|Keep-Alive|
+||Accept-Ranges|
+||Content-Length|
+||Last-Modified|
+||Content-Type|
 
-- 模型测试: 
+- UML图
 
-[ab test result.xlsx](ab test result.xlsx)
+![UML](TEST/压测/UML.png)
 
-- 缓存测试：
+- 模型测试
+[ab test result.xlsx](TEST/模型测试/ab test result.xlsx)
+- 缓存测试（单线程430B）
+    ![缓存测试](TEST/压测/cache test.png)
 
 用Redis缓存文件虽然比通过read/write快，但远不如直接sendfile函数快，因为sendfile是零拷贝，已经够快了，而Redis还涉及到对象的创建销毁，字符串复制等，反而比sendfile慢了。
 
-- <span id="concurrency">并发测试：</span>
+- <span id="concurrency">并发测试</span>
+使用webbench测试（不使用缓存）：10000并发量测试时间60秒。与[Tkeed](https://github.com/linw7/TKeed)做对比
 
-10000并发量测试时间60秒
+    ![并发测试](TEST/压测/concurrency test.png)
+
+    多线程涉及线程阻塞等待等，并不一定有充分优势。2线程测试时性能下降，3线程时性能提升明显。并且sendfile()很快。

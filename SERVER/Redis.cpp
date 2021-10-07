@@ -30,7 +30,7 @@ void Redis::connect() {
 string Redis::get(const string& key) {
     _reply = (redisReply *) redisCommand(_connect, "GET %s", key.c_str());
     if(_reply == nullptr) {
-        logger->error("GET {}执行失败:{}({})", key.c_str(), __FILE__, __LINE__);
+        logger->error("GET {}执行失败:{}({})", key, __FILE__, __LINE__);
         throw runtime_error("");
     }
     if(_reply->type == REDIS_REPLY_NIL) {

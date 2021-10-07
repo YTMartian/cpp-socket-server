@@ -13,7 +13,7 @@ private:
 public:
     GetProcessor();
 
-    ~GetProcessor();
+    ~GetProcessor() override;
 
     void run() override;
 

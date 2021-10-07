@@ -19,7 +19,6 @@
 #include <sys/sendfile.h>//sendfile()
 #include <numeric>
 #include <vector>
-#include <pthread.h>
 #include <utility>
 #include <assert.h>
 #include <fstream>
@@ -36,6 +35,10 @@
 #include <hiredis/hiredis.h>
 #include <netinet/tcp.h>
 #include <csignal>
+#include <thread> // std::thread
+#include <queue> // std::queue
+#include <mutex> // std::mutex
+#include <condition_variable> // std::condition_variable
 
 using namespace std;
 
@@ -48,6 +51,7 @@ const string LOG_DIR = "../logs/";
 #define DEFAULT_BACKLOG 128//max contain un-handle connects.
 #define KEEPALIVE_TIMEOUT 500//ms
 const string RESPONSE_200 = "HTTP/1.1 200 OK\r\n";
+const string RESPONSE_304 = "HTTP/1.1 304 Not Modified\r\n\r\n";
 const string RESPONSE_403 = "HTTP/1.1 403 Forbidden\r\n\r\n";//注意是http报文头和数据之间还有个空行
 const string RESPONSE_404 = "HTTP/1.1 404 Not Found\r\n\r\n";
 const string RESPONSE_500 = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
@@ -56,11 +60,12 @@ const string RESPONSE_500 = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
 #define LOG_MAX_SIZE (1048576 * 10)
 #define LOG_MAX_FILES 5
 //声明为inline，否则会报multiple definition of的编译错误
-//inline auto logger = spdlog::rotating_logger_mt("my_log", LOG_DIR + "rotating.txt", LOG_MAX_SIZE, LOG_MAX_FILES);
-inline auto logger = make_shared<spdlog::logger>("my_log", make_shared<spdlog::sinks::stdout_color_sink_mt>());//输出到屏幕
+inline auto logger = spdlog::rotating_logger_mt("my_log", LOG_DIR + "rotating.txt", LOG_MAX_SIZE, LOG_MAX_FILES);
+//inline auto logger = make_shared<spdlog::logger>("my_log", make_shared<spdlog::sinks::stdout_color_sink_mt>());//输出到屏幕
 //static bool USE_REDIS = true;
 #define CACHE_FILE_MAX_SIZE (1024 * 100)//将不超过CACHE_FILE_MAX_SIZE字节的文件缓存
 inline char FILE_BUF[N];
+
 
 /******************
 定义http mime
