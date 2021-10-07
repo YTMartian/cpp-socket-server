@@ -67,18 +67,21 @@
 
 - UML图
 
-![UML](TEST/压测/UML.png)
+![UML](./TEST/压测/UML.png)
 
 - 模型测试
-[ab test result.xlsx](TEST/模型测试/ab test result.xlsx)
+
+[ab test result.xlsx](./TEST/模型测试/ab test result.xlsx)
+
 - 缓存测试（单线程430B）
-    ![缓存测试](TEST/压测/cache test.png)
+
+    ![缓存测试](./TEST/压测/cache test.png)
 
 用Redis缓存文件虽然比通过read/write快，但远不如直接sendfile函数快，因为sendfile是零拷贝，已经够快了，而Redis还涉及到对象的创建销毁，字符串复制等，反而比sendfile慢了。
 
 - <span id="concurrency">并发测试</span>
 使用webbench测试（不使用缓存）：10000并发量测试时间60秒。与[Tkeed](https://github.com/linw7/TKeed)做对比
 
-    ![并发测试](TEST/压测/concurrency test.png)
+    ![并发测试](./TEST/压测/concurrency test.png)
 
     多线程涉及线程阻塞等待等，并不一定有充分优势。2线程测试时性能下降，3线程时性能提升明显。并且sendfile()很快。
