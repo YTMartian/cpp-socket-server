@@ -80,7 +80,7 @@
 用Redis缓存文件虽然比通过read/write快，但远不如直接sendfile函数快，因为sendfile是零拷贝，已经够快了，而Redis还涉及到对象的创建销毁，字符串复制等，反而比sendfile慢了。
 
 - <span id="concurrency">并发测试</span>
-使用webbench测试（不使用缓存）：10000并发量测试时间60秒。与[Tkeed](https://github.com/linw7/TKeed)做对比
+使用webbench测试（不使用缓存）：1000并发量测试时间60秒。与[Tkeed](https://github.com/linw7/TKeed)做对比
 
     ![并发测试](./TEST/压测/concurrency_test.png)
 
