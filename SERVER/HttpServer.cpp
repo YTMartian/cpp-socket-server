@@ -251,7 +251,7 @@ void HttpServer::run() {
                     try {
                         processor->set_client_sockfd(client_sockfd);
                         if (USE_MULTITHREAD) {
-                            //请求由主线程解析，然后由线程池进行具体处理
+                            //请求由主线程解析，然后由线程池进行具体处理。因为llhttp已经很快了，如果是传入request_buf到线程里的话，还会涉及到字符串复制等，速度其实并不快了。
                             thread_pool->addWork(processor);
                         } else {
                             processor->run();
