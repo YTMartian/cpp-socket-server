@@ -5,6 +5,7 @@
 
 #### 功能
 
+* [ ] reactor事件处理
 * [x] 请求：GET、POST
 * [x] 状态码（见[测试](#state)）
 * [x] 较高并发（见[测试](#concurrency)）
